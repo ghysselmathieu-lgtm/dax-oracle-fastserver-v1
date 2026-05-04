@@ -398,7 +398,7 @@ class EngineInstance {
     console.log(`🔄 [${this.filterName}] Uitgestelde wissel→${sw.sessionName}: SL=${sw.params.sl} TP=${sw.params.tp}`);
   }
 
-  applyParams(p) {
+    applyParams(p) {
     if(p.sl) this.params.sl=p.sl;
     if(p.tp) this.params.tp=p.tp;
     if(p.atrMax) this.params.atrMax=p.atrMax;
@@ -406,6 +406,9 @@ class EngineInstance {
     if(p.minScore) this.params.minScore=p.minScore;
     if(p.htfOn!==undefined) this.params.htfOn=p.htfOn;
     if(p.dirMode) this.params.dirMode=p.dirMode;
+    if(p.cooldown) this.params.cooldown=parseInt(p.cooldown);
+    if(p.contracts) this.params.contracts=parseInt(p.contracts);
+    if(p.commission) this.params.commission=parseFloat(p.commission);
   }
 
   logTrack(trade, exit) {
