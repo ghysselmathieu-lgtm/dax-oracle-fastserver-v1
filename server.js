@@ -773,22 +773,35 @@ const EXECUTOR_SECRET = process.env.EXECUTOR_SECRET || '';
 
 function forwardToExecutor(signal) {
   if (!EXECUTOR_URL) return;
-  const data = JSON.stringify({...signal, secret: EXECUTOR_SECRET});
-  const url = new URL(EXECUTOR_URL + '/webhook/signal');
+  // Map Railway signal-formaat naar Python executor /order schema
+  const payload = {
+    instrument: signal.instrument,                       // FDXM | MNQ
+    side: signal.dir === 'bull' ? 'BUY' : 'SELL',        // dir → side
+    qty: signal.qty || 1,
+    entry: signal.entry,
+    sl: signal.stop,                                     // stop → sl
+    tp: signal.tgt,                                      // tgt → tp
+    filter: signal.filter
+  };
+  const data = JSON.stringify(payload);
+  const url = new URL(EXECUTOR_URL + '/order');
   const mod = url.protocol === 'https:' ? https : require('http');
   const req = mod.request({
     hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
     path: url.pathname, method: 'POST',
-    headers: { 'Content-Type': 'application/json', 'x-secret': EXECUTOR_SECRET }
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${EXECUTOR_SECRET}`
+    }
   }, r => {
     let body = '';
     r.on('data', d => body += d);
     r.on('end', () => {
       try {
         const res = JSON.parse(body);
-        if (res.error) console.log(`⚠ Executor: ${res.error}`);
-        else console.log(`✅ Executor: order geplaatst #${res.parentOrderId||'?'} ${signal.instrument} ${signal.dir}`);
-      } catch(e) { console.log(`⚠ Executor response: ${body.slice(0,100)}`); }
+        if (res.error) console.log(`⚠ Executor: ${res.error}${res.reason?` (${res.reason})`:''}`);
+        else console.log(`✅ Executor: order geplaatst orderIds=${JSON.stringify(res.orderIds||[])} ${payload.instrument} ${payload.side}`);
+      } catch(e) { console.log(`⚠ Executor response (${r.statusCode}): ${body.slice(0,200)}`); }
     });
   });
   req.on('error', e => console.log(`⚠ Executor fout: ${e.message}`));
@@ -1145,3 +1158,4 @@ app.listen(PORT, () => {
     }, 2000);
   }
 });
+fix: forwardToExecutor → /order endpoint with Bearer auth + payload mapping
