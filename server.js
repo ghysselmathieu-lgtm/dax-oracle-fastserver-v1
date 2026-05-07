@@ -9,6 +9,10 @@
  *
  * Nachtelijke grid search (00:00) over alle data → beste params per sessie per filter.
  * Push notificaties via ntfy.sh bij signaal + trade close.
+ *
+ * v3.1 (Cloudflare Access): forwardToExecutor stuurt nu CF-Access-Client-Id en
+ * CF-Access-Client-Secret headers mee als CF_ACCESS_CLIENT_ID en CF_ACCESS_CLIENT_SECRET
+ * env vars zijn gezet. Nodig om Cloudflare Access te passeren bij server-to-server calls.
  */
 
 const express = require('express');
@@ -526,7 +530,7 @@ class EngineInstance {
     this.predictions.push({...this.activePending, outcome:'pending', filter:this.filterName});
     console.log(`★ [${this.filterName}] #${this.signalCount} ${sig.dir.toUpperCase()} sc=${sig.score} ${sig.setup} entry=${sig.entry}`);
     sendPush(`[${this.filterName}] ${sig.dir==='bull'?'▲ LONG':'▼ SHORT'} sc=${sig.score} ${sig.setup}\nEntry: ${sig.entry}\nTP: ${sig.tgt} | SL: ${sig.stop}`, '🔔');
-    
+
     // Forward to executor (VPS) if configured
     forwardToExecutor({
       instrument: INSTRUMENT === 'DAX' ? 'FDXM' : 'MNQ',  // Default mini contract
@@ -771,6 +775,9 @@ function sendPush(msg, emoji) {
 // Forward signaal naar VPS executor (als geconfigureerd)
 const EXECUTOR_URL = process.env.EXECUTOR_URL || '';
 const EXECUTOR_SECRET = process.env.EXECUTOR_SECRET || '';
+// v3.1: Cloudflare Access service token voor server-to-server auth
+const CF_ACCESS_CLIENT_ID = process.env.CF_ACCESS_CLIENT_ID || '';
+const CF_ACCESS_CLIENT_SECRET = process.env.CF_ACCESS_CLIENT_SECRET || '';
 
 function forwardToExecutor(signal) {
   if (!EXECUTOR_URL) return;
@@ -790,13 +797,20 @@ function forwardToExecutor(signal) {
   const data = JSON.stringify(payload);
   const url = new URL(EXECUTOR_URL + '/order');
   const mod = url.protocol === 'https:' ? https : require('http');
+  // v3.1: voeg CF Access service token headers toe als ze zijn geconfigureerd
+  // (vereist voor Cloudflare Access bescherming, optioneel voor lokaal/legacy)
+  const headers = {
+    'Content-Type': 'application/json',
+    'Authorization': `Bearer ${EXECUTOR_SECRET}`
+  };
+  if (CF_ACCESS_CLIENT_ID && CF_ACCESS_CLIENT_SECRET) {
+    headers['CF-Access-Client-Id'] = CF_ACCESS_CLIENT_ID;
+    headers['CF-Access-Client-Secret'] = CF_ACCESS_CLIENT_SECRET;
+  }
   const req = mod.request({
     hostname: url.hostname, port: url.port || (url.protocol === 'https:' ? 443 : 80),
     path: url.pathname, method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${EXECUTOR_SECRET}`
-    }
+    headers: headers
   }, r => {
     let body = '';
     r.on('data', d => body += d);
@@ -1015,11 +1029,13 @@ app.get('/state', (req, res) => {
       belgianHour: nowBelgianHour(),
       detectedSession: getSessionForHour(nowBelgianHour()).id,
       serverNow: new Date().toISOString(),
-      buildVersion: 'MEM-FIX-v4',
+      buildVersion: 'CF-ACCESS-v3.1',
       saveFailures: saveFailureCount,
       lastSaveError: lastSaveError,
       gridSearchInProgress: gridSearchInProgress,
-      gridSearchStartedAt: gridSearchInProgress ? gridSearchStartTime : null
+      gridSearchStartedAt: gridSearchInProgress ? gridSearchStartTime : null,
+      // v3.1: bevestiging dat CF Access service token configured is (zonder secrets te tonen)
+      cfAccessConfigured: !!(CF_ACCESS_CLIENT_ID && CF_ACCESS_CLIENT_SECRET)
     }
   });
 });
@@ -1157,9 +1173,11 @@ loadState();
 
 app.listen(PORT, () => {
   console.log(`\n${'═'.repeat(60)}`);
-  console.log(`  ${INSTRUMENT} Oracle Server v3 — 4 Engines + Grid Search`);
+  console.log(`  ${INSTRUMENT} Oracle Server v3.1 — 4 Engines + Grid Search`);
   console.log(`  Port: ${PORT} | Tick: ${TICK_SIZE} | ${CURRENCY}${PT_VALUE}/pt`);
   console.log(`  Candles: ${candleHistory.length} | Track: ${trackRecord.length}`);
+  console.log(`  Executor: ${EXECUTOR_URL || '(not configured)'}`);
+  console.log(`  CF Access: ${CF_ACCESS_CLIENT_ID && CF_ACCESS_CLIENT_SECRET ? '✓ configured' : '✗ not set (executor calls will fail if behind CF Access)'}`);
   for(const [n,e] of Object.entries(engines)){
     console.log(`  [${n}] SL=${e.params.sl} TP=${e.params.tp} | ${e.activeTrade?'TRADE':'FREE'} | ${e.predictions.length} preds`);
   }
